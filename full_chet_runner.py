@@ -181,11 +181,11 @@ RESERVE_1 = "rgb(173, 155, 88)"
 RESERVE_2 = "rgb(97, 120, 111)"
 EXTEND = "rgb(155, 155, 155)"
 
-block_bse = 3
+block_bse = 1
 page_num = 100
 start_page = 0
 
-def csc_runner():
+def csc_runner(heuristic):
     """ Runs the visualizer with CSC priority """
     print(f"Running benchmarks {benchmarks} with blocks: {block_bse}, sp: {start_page}, pr: {page_num}, CSC priority")
     time.sleep(1)
@@ -213,7 +213,7 @@ def csc_runner():
                 
                 # Change 2nd param for how many memory blocks
                 
-                post_csc = csc_encode(page)
+                post_csc = csc_encode(page, heuristic)
                 post_bse = bse_encode(post_csc, block_bse)
             
                 pre_bse_pair = bse_decode(post_bse)
@@ -359,7 +359,7 @@ def csc_runner():
 
 
 
-def bse_runner():
+def bse_runner(heuristic):
     """ Runs the visualizer with BSE priority """
     print(f"Running benchmarks {benchmarks} with blocks: {block_bse}, sp: {start_page}, pr: {page_num}, BSE priority")
     time.sleep(1)
@@ -387,7 +387,7 @@ def bse_runner():
                 
                 # Change 2nd param for how many memory blocks
                 
-                post_csc = csc_encode(page)
+                post_csc = csc_encode(page, heuristic)
                 post_bse = bse_encode(post_csc, block_bse)
             
                 pre_bse_pair = bse_decode(post_bse)
@@ -554,6 +554,7 @@ if __name__ == "__main__":
     parser.add_argument("-pr", "--pagerange", type=int, required=False, help="Number of pages to run (default 100)")
     parser.add_argument("-bm", "--benchmark", nargs="+", type=str, help = "name of benchmark(s) to run")
     parser.add_argument("-csc", "--cscpriority", action="store_true", help = "alternate csc palette prioritization")
+    parser.add_argument("-hu", "--heuristic", help="choose heuristic (default (no input) = savings/span**.5, 0 = savings, 1 = savings/span)")
         
     direct = glob.glob('well_rounded_tests\\*')
     direct_names = []
@@ -577,10 +578,17 @@ if __name__ == "__main__":
     if args.benchmark:
         benchmarks = args.benchmark
         
-    if not args.cscpriority:
-        bse_runner()
+    if args.heuristic == "0":
+        heuristic = 0
+    elif args.heuristic == "1":
+        heuristic = 1
     else:
-        csc_runner()
+        heuristic = 2
+        
+    if not args.cscpriority:
+        bse_runner(heuristic)
+    else:
+        csc_runner(heuristic)
     
     print("Running complete. Terminating process.")
     

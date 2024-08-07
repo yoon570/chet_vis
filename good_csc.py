@@ -243,8 +243,9 @@ def read_file_in_chunks(filename, chunk_size=4096):
 # modify it to look in the local forward the next, say 8?
 # LOCAL_WINDOW = 1 # size so 1 is the lowest it should go
 LOCAL_WINDOW = 16 # size so 1 is the lowest it should go
-def compress_block(block, stride_escape, tolerance=0, label_mode=False):
+def compress_block(block, stride_escape, heu, tolerance=0, label_mode=False):
     block = deepcopy(block)
+    
     idx = 0
     while idx < len(block):
         options = []
@@ -256,9 +257,12 @@ def compress_block(block, stride_escape, tolerance=0, label_mode=False):
                 savings = pattern.savings(occurrences)
 
                 if span:
-                    # heuristic = savings
-                    # heuristic = savings/span
-                    heuristic = savings/span**.5
+                    if heu == 0:
+                        heuristic = savings
+                    elif heu == 1:
+                        heuristic = savings/span
+                    else:
+                        heuristic = savings/span**.5
                 else:
                     heuristic = 0
 

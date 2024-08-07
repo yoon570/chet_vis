@@ -74,7 +74,7 @@ def read_file_in_chunks(filename, chunk_size=4096):
         return list(takewhile(lambda chunk: chunk, chunk_iter))
 
 
-def csc_encode(page, max_block=256, tolerance=0, label=False):  # change this to be 256
+def csc_encode(page, heuristic, max_block=256, tolerance=0, label=False):  # change this to be 256
     # break it up into max size blocks
     # with open('correct.data', 'wb') as f:
     # f.write(bytes(page))
@@ -120,7 +120,7 @@ def csc_encode(page, max_block=256, tolerance=0, label=False):  # change this to
     # okay now have everything just need to actually compress
     blocks = list(batched(compressed, max_block))
     compressed_blocks = [
-        compress_block(list(block), stride_escape, tolerance=tolerance, label_mode=label) for block in blocks
+        compress_block(list(block), stride_escape, heuristic, tolerance=tolerance, label_mode=label) for block in blocks
     ]
     compressed = list(chain(*compressed_blocks))
 
