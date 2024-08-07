@@ -1,0 +1,10 @@
+well_rounded_tests
+well_rounded_results
+page_data.pickl
+Lib
+Scripts
+Include
+benchmark_vis
+pyvenv.cfg
+test_alg.py
+__pycache__/
