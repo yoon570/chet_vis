@@ -7,6 +7,8 @@ from tqdm import tqdm
 import csv
 import argparse
 
+PAGE_LEN = 4096
+
 def bwt_encode(data):
     rotations = sorted(data[i:]+data[:i] for i in range(len(data)))
     return list(list(zip(*rotations))[-1]), rotations.index(data)
@@ -47,7 +49,9 @@ def mtf_decode(transformed):
         byte_values.insert(0, byte_values.pop(num))
     return data
 
-PAGE_LEN = 4096
+def chunk_page(page, chunk_size):
+    # Split the byte object into chunks of the specified size
+    return [page[i:i+chunk_size] for i in range(0, len(page), chunk_size)]
 
 if __name__ == '__main__':    
     with open("data.csv", "w", newline="") as datafile:
@@ -60,11 +64,13 @@ if __name__ == '__main__':
         
         parser = argparse.ArgumentParser()
         parser.add_argument("-p", "--pages", required=True)
+        parser.add_argument("-cs", "--chunksize", required=True)
         
         args = parser.parse_args()
         
         statistics = ""
         page_num = int(args.pages)
+        chunk_size = int(args.chunksize)
         
         statwriter = csv.writer(datafile, delimiter=",")
         statwriter.writerow(["Page", "BSE len", "HUF len", "MTF len", "BWT len", "BSE cr", "HUF cr", "MTF cr", "BWT cr", "MTF worse?", "BWT worse?"])
@@ -85,7 +91,7 @@ if __name__ == '__main__':
                     break
                 
                 # BSE --> Huffman
-                post_csc = csc_encode(page)
+                post_csc = csc_encode(page, 2)
                 post_bse = bse_encode(post_csc, 3)
                 post_huf = huffman_encode(post_bse, 15)
                 
