@@ -7,8 +7,6 @@ from tqdm import tqdm
 import csv
 import argparse
 
-PAGE_LEN = 4096
-
 def bwt_encode(data):
     rotations = sorted(data[i:]+data[:i] for i in range(len(data)))
     return list(list(zip(*rotations))[-1]), rotations.index(data)
@@ -49,92 +47,71 @@ def mtf_decode(transformed):
         byte_values.insert(0, byte_values.pop(num))
     return data
 
-def chunk_page(page, chunk_size):
-    # Split the byte object into chunks of the specified size
-    return [page[i:i+chunk_size] for i in range(0, len(page), chunk_size)]
-
 if __name__ == '__main__':    
-    with open("data.csv", "w", newline="") as datafile:
-        benchmarks = [
-            "declipseparsed_3",
-            "parsec_splash2x.water_spatial5dump_3",
-            "sparkbench_LogisticRegression5dump_3",
-            "xalanparsed_3"
-        ]
+    with open("yoon_segmented.txt.", "r") as datafile:
+        bm_hufavg = 0
+        bm_mtfavg = 0
+        bm_bwtavg = 0
+        while True:
+            bm_title = datafile.readline()
+            pages_parse = datafile.readline()
+            if not bm_title:
+                break
         
-        parser = argparse.ArgumentParser()
-        parser.add_argument("-p", "--pages", required=True)
-        parser.add_argument("-cs", "--chunksize", required=True)
-        
-        args = parser.parse_args()
-        
-        statistics = ""
-        page_num = int(args.pages)
-        chunk_size = int(args.chunksize)
-        
-        statwriter = csv.writer(datafile, delimiter=",")
-        statwriter.writerow(["Page", "BSE len", "HUF len", "MTF len", "BWT len", "BSE cr", "HUF cr", "MTF cr", "BWT cr", "MTF worse?", "BWT worse?"])
-        
-        for benchmark in benchmarks:
-            pages = read_file_in_chunks(f"labeled_dumps/{benchmark}.bin")
-            progress_bar = tqdm(total=page_num, desc=f"{benchmark}", ncols = 100)
+            pages = eval(pages_parse)
             
-            bas_compsum = 0
-            huf_compsum = 0
-            mtf_compsum = 0
-            bwt_compsum = 0
+            benchmark_baseline = 0
+            benchmark_huf = 0
+            benchmark_mtf = 0
+            benchmark_bwt = 0
             
-            for p_idx, page in enumerate(pages):
+            for page in pages:
+                new_page_mtf = []
+                new_page_bwt = []
                 
-                if p_idx >= page_num:
-                    progress_bar.close()
-                    break
-                
-                # BSE --> Huffman
-                post_csc = csc_encode(page, 2)
-                post_bse = bse_encode(post_csc, 3)
-                post_huf = huffman_encode(post_bse, 15)
-                
-                # BSE --> MTF --> Huffman
-                post_mtf = mtf_encode(post_bse)
-                post_mtf_huf = huffman_encode(post_mtf, 15)
-                
-                # BSE --> BWT --> MTF --> Huffman
-                bwt_pair = bwt_encode(post_bse)
-                bwt_metadata = bwt_pair[1]
-                post_bwt = bwt_pair[0]
-                
-                post_bwt_mtf = mtf_encode(post_bwt)
-                post_bwt_mtf_huf = huffman_encode(post_bwt_mtf, 15)
-                
-                bas_pagelen = len(post_bse)
-                huf_pagelen = len(post_huf)
-                mtf_pagelen = len(post_mtf_huf)
-                bwt_pagelen = len(post_bwt_mtf_huf) + 8
-                
-                bas_cr = PAGE_LEN / len(post_bse)
-                huf_cr = PAGE_LEN / len(post_huf)
-                mtf_cr = PAGE_LEN / len(post_mtf_huf)
-                bwt_cr = PAGE_LEN / len(post_bwt_mtf_huf)
-                
-                bas_compsum += bas_pagelen
-                huf_compsum += huf_pagelen
-                mtf_compsum += mtf_pagelen
-                bwt_compsum += bwt_pagelen
-
-                progress_bar.update(1)
-                
-                huf_worse = ""
-                mtf_worse = ""
-                bwt_worse = ""
-                
-                if bas_pagelen < huf_pagelen: huf_worse = "x"
-                if bas_pagelen < mtf_pagelen: mtf_worse = "x"
-                if bas_pagelen < bwt_pagelen: bwt_worse = "x"
+                for chunk in page:
+                    new_chunk = []
                     
-                statwriter.writerow([p_idx, bas_pagelen, huf_pagelen, mtf_pagelen, bwt_pagelen, bas_cr, huf_cr, mtf_cr, bwt_cr])    
-            
-            uncomp_sum = PAGE_LEN * page_num
-            print(f"Compression ratios = BSE: {uncomp_sum / bas_compsum}, HUF: {uncomp_sum / huf_compsum}, MTF: {uncomp_sum / mtf_compsum}, BWT: {uncomp_sum / bwt_compsum}")      
+                    for value in chunk:
+                        new_val = value % 256
+                        new_chunk.append(new_val)
+                        
+                    post_mtf = mtf_encode(new_chunk)
+                    new_page_mtf.append(post_mtf)
+                    
+                    post_bwt = bwt_encode(new_chunk)
+                    post_mtf = mtf_encode(post_bwt[0])   
+                    new_page_bwt.append(post_mtf)                 
                 
-            progress_bar.close()
+                page_measurement = [x for subx in page for x in subx]
+                newpage_mtf_measurement = [y for suby in new_page_mtf for y in suby]
+                newpage_bwt_measurement = [z for subz in new_page_bwt for z in subz]
+                newpage_bwt = huffman_encode(newpage_bwt_measurement, 15)
+                newpage_mtf = huffman_encode(newpage_mtf_measurement, 15)
+                newpage_huf = huffman_encode(page_measurement, 15)
+                
+                benchmark_baseline += len(page_measurement)
+                
+                if len(newpage_huf) < len(page_measurement):
+                    benchmark_huf += len(newpage_huf)
+                else:
+                    benchmark_huf += len(page_measurement)
+                    
+                if len(newpage_mtf) < len(page_measurement):
+                    benchmark_mtf += len(newpage_mtf)
+                else:
+                    benchmark_mtf += len(page_measurement)
+                    
+                if len(newpage_bwt) < len(page_measurement):
+                    benchmark_bwt += len(newpage_bwt)
+                else:
+                    benchmark_bwt += len(page_measurement)
+            
+            print(bm_title + "---------")
+            print(f"Huf: {benchmark_baseline / benchmark_huf}, MTF: {benchmark_baseline / benchmark_mtf}, BWT: {benchmark_baseline / benchmark_bwt}")
+            bm_hufavg += benchmark_baseline / benchmark_huf
+            bm_mtfavg += benchmark_baseline / benchmark_mtf
+            bm_bwtavg += benchmark_baseline / benchmark_bwt
+        
+        print("Overall average\n--------------\n")
+        print(f"Huf: {bm_hufavg / 31}, MTF: {bm_mtfavg / 31}, BWT: {bm_bwtavg / 31}")

@@ -8,3 +8,6 @@ benchmark_vis
 pyvenv.cfg
 test_alg.py
 __pycache__/
+9bit_for_ans/
+data.csv
+yoon_segmented.txt
