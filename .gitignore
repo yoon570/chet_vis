@@ -11,3 +11,6 @@ __pycache__/
 9bit_for_ans/
 data.csv
 yoon_segmented.txt
+test_internal_methods.py
+reuse_distance_tests.py
+datafile.csv
