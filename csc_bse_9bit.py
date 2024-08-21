@@ -3,6 +3,7 @@ from collections import defaultdict, deque, Counter
 import glob
 from test_alg import parallel_test_compression_ratio_chunks, serial_test_compression_ratio_chunks
 from math import log2
+import pickle
 
 def read_file_in_chunks(filename, chunk_size=4096):
     with open(filename, "rb") as file:
@@ -14,8 +15,16 @@ from typing import List
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-@dataclass
+def bse_savings_get():
+    return bse_global_savings
+
+bse_global_savings = [0] * 63
+# Add into here the stages and what sequences affected it
 class MetaByte(ABC):
+    def __init__(self):
+        self.stage1 = []
+        self.stage2 = []
+
     @classmethod
     @abstractmethod
     def get_prefix(cls) -> str:
@@ -32,6 +41,13 @@ class MetaByte(ABC):
     @abstractmethod
     def decode(cls, value):
         pass
+    
+    def set_metadata(self, csc_metadata, bse_metadata):
+        self.stage1 = csc_metadata
+        self.stage2 = bse_metadata
+    def get_metadata(self):
+        return (self.stage1, self.stage2)
+        
     @property
     @abstractmethod
     def repr_str(self) -> str:
@@ -51,6 +67,7 @@ class MetaByte(ABC):
 
 class LitByte(MetaByte):
     def __init__(self, value):
+        super().__init__()
         assert 0 <= value < 2**8
         self._value = value
     @classmethod
@@ -78,6 +95,7 @@ class LitByte(MetaByte):
 
 class BSESub(MetaByte):
     def __init__(self, sub_idx):
+        super().__init__()
         assert 0 <= sub_idx < 64
         self._sub_idx = sub_idx
     @classmethod
@@ -108,6 +126,7 @@ class BSESub(MetaByte):
 
 class CSC0Byte(MetaByte):
     def __init__(self, repeats):
+        super().__init__()
         assert self.get_min_val() <= repeats <= self.get_max_val()
         self._repeats = repeats
     @classmethod
@@ -134,14 +153,22 @@ class CSC0Byte(MetaByte):
         new_page += chunk[idx:]
         return new_page
     @classmethod
-    def decompress(cls, chunk: List[MetaByte]) -> List[MetaByte]:
+    def decompress(cls, chunk: List[MetaByte], part_idx) -> List[MetaByte]:
         csc_byte: CSC0Byte = chunk[0]
         chunk = chunk[1:]
 
         new_page = []
         idx = 0
         for _ in range(csc_byte.repeats):
-            new_page.extend(csc_byte.get_match_part())
+            # Try this? This should append metadata to each csc byte that gets attached here
+            # At least that's the hope
+            matchpart = deepcopy(csc_byte.get_match_part())
+            for part in matchpart:
+                part_metadata = part.get_metadata()
+                csc_metadata = part_metadata[0]
+                csc_metadata.append(part_idx)
+                part.set_metadata(csc_metadata, part_metadata[1])
+            new_page.extend(matchpart)
             new_page.extend(chunk[idx:idx+csc_byte.get_stride()-len(csc_byte.get_match_part())])
             idx += csc_byte.get_stride()-len(csc_byte.get_match_part())
 
@@ -307,12 +334,13 @@ def csc0_encode(metabyte_chunk: List[MetaByte]) -> List[MetaByte]:
 def csc0_decode(metabyte_chunk: List[MetaByte]) -> List[MetaByte]:
     metabyte_chunk = deepcopy(metabyte_chunk) 
     patterns: List[CSC0Byte] = [RLE0Byte, DB04Byte, DB08Byte, ALT0Byte][::-1]
-    for pattern in patterns:
+    for patt_idx, pattern in enumerate(patterns):
         idx = len(metabyte_chunk)-1
         while idx >= 0: # go in reverse order
             metabyte = metabyte_chunk[idx]
             if isinstance(metabyte, pattern):
-                metabyte_chunk[idx:] = CSC0Byte.decompress(metabyte_chunk[idx:])
+                # RLE0 = 0, DB04 = 1, etc.
+                metabyte_chunk[idx:] = CSC0Byte.decompress(metabyte_chunk[idx:], 3 - patt_idx)
             idx -= 1
     return metabyte_chunk
 
@@ -408,11 +436,12 @@ def bse_encode_9b(metabyte_chunks: List[List[MetaByte]], memory_blocks: int):
 
     sub_bits = [f"{metabyte.num_encoding:09b}" for sub in subs for metabyte in sub]
     sub_bits = "".join(sub_bits)
-    dict_bits = count_bits + sub_length_bits + sub_bits
+    dict_bits = count_bits + sub_length_bits + sub_bits 
     assert len(dict_bits) <= memory_blocks*64*8
     return compressed, dict_bits
 
-def bse_decode_9b(metabyte_page: List[MetaByte], dict_bits: str):
+# Dictionary parsing code
+def extract_sequences(dict_bits: str):
     idx = 0
     count = int(dict_bits[:6], 2)
     idx += 6
@@ -427,7 +456,7 @@ def bse_decode_9b(metabyte_page: List[MetaByte], dict_bits: str):
             sequence.append(decode_value(int(dict_bits[idx:idx+9], 2)))
             idx += 9
         sequences.append(sequence)
-
+        
     expansions = [[LitByte(value=0) for _ in range(5)] for _ in range(64)]
     seq_lengths = [0] * 64
 
@@ -435,15 +464,37 @@ def bse_decode_9b(metabyte_page: List[MetaByte], dict_bits: str):
         seq_lengths[sub_byte.sub_index] = len(seq)
         for idx, metabyte in enumerate(seq[::-1]): # reverse early
             expansions[sub_byte.sub_index][idx] = metabyte
+        
+    return sequences, expansions, seq_lengths
+
+from copy import deepcopy
+
+def bse_decode_9b(metabyte_page: List[MetaByte], dict_bits: str):
+    
+    # Moved dictionary parsing code so I could access it from the CHET runner
+    _, expansions, seq_lengths = extract_sequences(dict_bits)
 
     page = deque(metabyte_page)
     output = []
 
+    # This is the same as the 8bit, touch here for BSE
     while page:
         num = page.popleft()
         if isinstance(num, BSESub) and seq_lengths[num.sub_index]: # on expansion list
+            # Extract metadata
+            bse_global_savings[num.sub_index] += 1
+            num_metadata = num.get_metadata()
+            new_stage2 = deepcopy(num_metadata[1])
+            new_stage2.append(num.sub_index)
             for idx in range(seq_lengths[num.sub_index]):
-                page.appendleft(expansions[num.sub_index][idx])
+
+                # Create new metabyte
+                newbyte = deepcopy(expansions[num.sub_index][idx])
+                # Keep stage 1 metadata same, append new replacement candidate
+
+                newbyte.set_metadata(deepcopy(num_metadata[0]), new_stage2)
+                # Append newbyte to page
+                page.appendleft(newbyte)
         else:
             output.append(num)
     return output
@@ -487,9 +538,12 @@ def compress_all_stages(page, mem_blks, chunksize, stage3=False):
         stage2_compressed_bin = apply_chunkwise(metabyte_page_to_binary, stage2_compressed)
         final_compressed = stage2_compressed_bin
 
-    return final_compressed, dict_bits
+    return final_compressed, dict_bits, stage2_compressed
 
 def decompress_all_stages(compressed_chunks_bin, dict_bits, stage3=False):
+    global bse_global_savings
+
+    bse_global_savings = [0] * 63
     if stage3:
         stage3_decompressed = apply_chunkwise(static_tree_decode, compressed_chunks_bin)
         stage2_decompressed = apply_chunkwise(bse_decode_9b, stage3_decompressed, dict_bits)
@@ -497,14 +551,14 @@ def decompress_all_stages(compressed_chunks_bin, dict_bits, stage3=False):
         # decomp stage 2 :
         stage2_decompressed = apply_chunkwise(binary_to_metabyte_page, compressed_chunks_bin)
         stage2_decompressed = apply_chunkwise(bse_decode_9b, stage2_decompressed, dict_bits)
-
+        
     # decomp stage 1:
     stage1_decompressed = stage2_decompressed
     # reverse csc0
     stage1_decompressed = apply_chunkwise(csc0_decode, stage1_decompressed)
 
     # unchunk and unpad
-    decompressed_page = unpad_output(unchunk_output(stage1_decompressed))
+    decompressed_page = unchunk_output(stage1_decompressed)
 
     return decompressed_page
 
