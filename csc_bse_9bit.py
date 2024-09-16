@@ -16,9 +16,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 def bse_savings_get():
-    return bse_global_savings
+    return bse_applications
 
-bse_global_savings = [0] * 63
+def csc_savings_get():
+    return csc_applications
+
+bse_applications = [0] * 63
+csc_applications = [0] * 4
 # Add into here the stages and what sequences affected it
 class MetaByte(ABC):
     def __init__(self):
@@ -340,6 +344,7 @@ def csc0_decode(metabyte_chunk: List[MetaByte]) -> List[MetaByte]:
             metabyte = metabyte_chunk[idx]
             if isinstance(metabyte, pattern):
                 # RLE0 = 0, DB04 = 1, etc.
+                csc_applications[3 - patt_idx] += 1
                 metabyte_chunk[idx:] = CSC0Byte.decompress(metabyte_chunk[idx:], 3 - patt_idx)
             idx -= 1
     return metabyte_chunk
@@ -482,7 +487,7 @@ def bse_decode_9b(metabyte_page: List[MetaByte], dict_bits: str):
         num = page.popleft()
         if isinstance(num, BSESub) and seq_lengths[num.sub_index]: # on expansion list
             # Extract metadata
-            bse_global_savings[num.sub_index] += 1
+            bse_applications[num.sub_index] += 1
             num_metadata = num.get_metadata()
             new_stage2 = deepcopy(num_metadata[1])
             new_stage2.append(num.sub_index)
@@ -538,12 +543,14 @@ def compress_all_stages(page, mem_blks, chunksize, stage3=False):
         stage2_compressed_bin = apply_chunkwise(metabyte_page_to_binary, stage2_compressed)
         final_compressed = stage2_compressed_bin
 
-    return final_compressed, dict_bits, stage2_compressed
+    return final_compressed, dict_bits, stage1_compressed, stage2_compressed
 
 def decompress_all_stages(compressed_chunks_bin, dict_bits, stage3=False):
-    global bse_global_savings
+    global bse_applications
+    global csc_applications
 
-    bse_global_savings = [0] * 63
+    bse_applications = [0] * 63
+    csc_applications = [0] * 4
     if stage3:
         stage3_decompressed = apply_chunkwise(static_tree_decode, compressed_chunks_bin)
         stage2_decompressed = apply_chunkwise(bse_decode_9b, stage3_decompressed, dict_bits)

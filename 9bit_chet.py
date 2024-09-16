@@ -1,8 +1,6 @@
 from csc_bse_9bit import *
 from tqdm import tqdm
-import time
 import argparse
-import pickle
 import glob
 import tqdm
 
@@ -47,7 +45,6 @@ bse_palette = [
     "background-color:rgb(255, 127, 0); color:rgb(0, 0, 0)",   # Orange
     "background-color:rgb(255, 255, 0); color:rgb(0, 0, 0)",   # Yellow
     "background-color:rgb(127, 255, 0); color:rgb(0, 0, 0)",   # Chartreuse
-    "background-color:rgb(0, 255, 127); color:rgb(0, 0, 0)",   # Spring Green
     
     "background-color:rgb(0, 255, 255); color:rgb(0, 0, 0)",   # Cyan
     "background-color:rgb(0, 127, 255); color:rgb(0, 0, 0)",   # Azure
@@ -58,12 +55,10 @@ bse_palette = [
     "background-color:rgb(127, 0, 0); color:rgb(255, 255, 255)",     # Dark Red
     "background-color:rgb(127, 63, 0); color:rgb(255, 255, 255)",    # Dark Orange
     "background-color:rgb(127, 127, 0); color:rgb(255, 255, 255)",   # Dark Yellow
-    "background-color:rgb(63, 127, 0); color:rgb(255, 255, 255)",    # Dark Chartreuse
     
     "background-color:rgb(0, 127, 0); color:rgb(255, 255, 255)",     # Dark Green
     "background-color:rgb(0, 127, 127); color:rgb(255, 255, 255)",   # Dark Cyan
     "background-color:rgb(0, 0, 127); color:rgb(255, 255, 255)",     # Dark Blue
-    "background-color:rgb(63, 0, 127); color:rgb(255, 255, 255)"    # Dark Violet
 ]
 
 csc_palette = [
@@ -136,7 +131,7 @@ def bse_runner():
                     htmlf.write(html_content_top)
                 
                 # Compressing input
-                compressed, dictionary, post_bse = compress_all_stages(page, block_bse, 256)
+                compressed, dictionary, post_csc, post_bse = compress_all_stages(page, block_bse, 256)
                 # Decompressing input to get metadata
                 decompressed = decompress_all_stages(compressed, dictionary)
                 
@@ -148,7 +143,6 @@ def bse_runner():
                     if nn % 64 == 0:
                         print("\n\n")
                     print(thing.get_metadata(), end = ",") """
-                
                             
                 compressed_nochunk = "".join(compressed)                
                 
@@ -164,34 +158,41 @@ def bse_runner():
                 
                 # Calculate the savings here
                 csc_savings = [0] * 4                
-                bse_global_savings = bse_savings_get()
-                
+                bse_applications = bse_savings_get()
                 
                 # Appearing in compressed input
                 csc_appear = [0] * 4
                 bse_appear = [0] * 63
                 literal_count = 0
                 
+                for elem in decompressed:
+                    elem_data = elem.get_metadata()
+                    if len(elem_data[0]) < 1 and len(elem_data[1]) < 1:
+                        literal_count += 1
+                
                 for chunk in post_bse:
                     for metab in chunk:
                         if isinstance(metab, BSESub):
                             bse_appear[metab.sub_index] += 1
-                        elif isinstance(metab, RLE0Byte):
+
+                for chunk1 in post_bse:
+                    for metab1 in chunk1:
+                        if isinstance(metab1, RLE0Byte):
                             csc_appear[0] += 1
-                        elif isinstance(metab, DB04Byte):
+                        elif isinstance(metab1, DB04Byte):
                             csc_appear[1] += 1
                         elif isinstance(metab, DB08Byte):
                             csc_appear[2] += 1
                         elif isinstance(metab, ALT0Byte):
                             csc_appear[3] += 1
-                        else:
-                            literal_count += 1
-                        
+                
                 block_limit = 6
                 dictstr = ""
-                exp_dictstr = ""
                 limit_n1 = 0
                 limit_n2 = 0
+                
+                post_bse = unchunk_output(post_bse)
+                post_csc = unchunk_output(post_csc)
                 
                 dict_lengths = [0] * 63
                 
@@ -203,28 +204,25 @@ def bse_runner():
                     elif block_limit > BLOCK1:
                         limit_n1 = limit_idx
                 
-                bse_total = 0
                 bse_actual_savings = [0] * 63
+                bse_affected_num = [0] * 63
                 
                 for i in range(63):
-                    bse_actual_savings[i] = bse_global_savings[i] * (dict_lengths[i] - 1)                                   
-
+                    bse_actual_savings[i] = bse_applications[i] * (dict_lengths[i] - 1)   
+                    bse_affected_num[i] = bse_applications[i] * (dict_lengths[i])        
+                    
                 for n, item in enumerate(decompressed):
                     if n % 64 == 0:
                         pagestr += "\n"
                         
                     csc_meta = item.get_metadata()[0]
                     bse_meta_presort = item.get_metadata()[1]
-                    bse_meta = sorted(bse_meta_presort, reverse=True )
-                    
+                    bse_meta = sorted(bse_meta_presort, reverse=True)                    
                     
                     if (len(csc_meta) >= 1):
-                        for c_sav in csc_meta:
-                            csc_savings[c_sav] += 1
+                        csc_savings[csc_meta[0]] += 1
                         pagestr += f"<span style=\"background-color:rgb(0,0,0); color:rgb(255,255,255);\">{item.num_encoding:02x} </span>"
-                    elif (len(bse_meta) >= 1):
-                        bse_total += 1
-                        
+                    elif (len(bse_meta) >= 1):                       
                         if limit_n2 > 0 and bse_meta[0] >= limit_n2:
                             pagestr += f"<span style=\"{RESERVE3}\">{item.num_encoding:02x} </span>"
                         elif limit_n1 > 0 and bse_meta[0] >= limit_n1:
@@ -238,22 +236,39 @@ def bse_runner():
                         pagestr += f"{item.num_encoding:02x} "
                 
                 expanded_dict = expand_dict(smdict)
+                
+                block_savings = [0] * 3
                     
                 for limit_idx, (k, v) in enumerate(smdict.items()):
                     if limit_n2 > 0 and limit_idx >= limit_n2:
-                        dictstr += f"<span style=\"{RESERVE3}\">{str(k)} : {smdict[k]} applied {bse_global_savings[k.sub_index]}, in compressed {bse_appear[k.sub_index]}, savings: {bse_actual_savings[k.sub_index]}</span>\n"
+                        dictstr += f"<span style=\"{RESERVE3}\">[{k.sub_index}]: {[item for item in smdict[k]]}: {bse_appear[k.sub_index]}, {bse_affected_num[k.sub_index]}, {bse_applications[k.sub_index]}, {bse_actual_savings[k.sub_index]}B</span> "
+                        block_savings[2] += bse_actual_savings[k.sub_index]
                     elif limit_n1 > 0 and limit_idx >= limit_n1:
-                        dictstr += f"<span style=\"{RESERVE2}\">{str(k)} : {smdict[k]} applied {bse_global_savings[k.sub_index]}, in compressed {bse_appear[k.sub_index]}, savings: {bse_actual_savings[k.sub_index]}</span>\n"
+                        dictstr += f"<span style=\"{RESERVE2}\">[{k.sub_index}]: {[item for item in smdict[k]]}: {bse_appear[k.sub_index]}, {bse_affected_num[k.sub_index]}, {bse_applications[k.sub_index]}, {bse_actual_savings[k.sub_index]}B</span> "
+                        block_savings[1] += bse_actual_savings[k.sub_index]
                     elif limit_idx >= len(bse_palette):
-                        dictstr += f"<span style=\"{RESERVE1}\">{str(k)} : {smdict[k]} applied {bse_global_savings[k.sub_index]}, in compressed {bse_appear[k.sub_index]}, savings: {bse_actual_savings[k.sub_index]}</span>\n"
+                        dictstr += f"<span style=\"{RESERVE1}\">[{k.sub_index}]: {[item for item in smdict[k]]}: {bse_appear[k.sub_index]}, {bse_affected_num[k.sub_index]}, {bse_applications[k.sub_index]}, {bse_actual_savings[k.sub_index]}B</span> "
+                        block_savings[0] += bse_actual_savings[k.sub_index]
+                    elif limit_idx == 0:
+                        dictstr += f"<span style=\"{bse_palette[k.sub_index]}\">[{k.sub_index}]: {[item for item in smdict[k]]}: appears in final output {bse_appear[k.sub_index]}, bytes affected by sequence {bse_affected_num[k.sub_index]}, sequence applied {bse_applications[k.sub_index]} times, savings of {bse_actual_savings[k.sub_index]}B</span>\n"
+                        block_savings[0] += bse_actual_savings[k.sub_index]
                     else:
-                        dictstr += f"<span style=\"{bse_palette[k.sub_index]}\">{str(k)} : {[item for item in smdict[k]]} applied {bse_global_savings[k.sub_index]}, in compressed {bse_appear[k.sub_index]}, savings: {bse_actual_savings[k.sub_index]}</span>\n"
-                    
+                        dictstr += f"<span style=\"{bse_palette[k.sub_index]}\">[{k.sub_index}]: {[item for item in smdict[k]]}: {bse_appear[k.sub_index]}, {bse_affected_num[k.sub_index]}, {bse_applications[k.sub_index]}, {bse_actual_savings[k.sub_index]}B</span> "
+                        block_savings[0] += bse_actual_savings[k.sub_index]
                     # For now, just append
                     # Figure out how to add CSC shading here
+                dictstr += "\n\n"
+                
                 for limit_idx, (k, v) in enumerate(expanded_dict.items()):
-                    dictstr += ""
                     for entry in v:
+                        if limit_n2 > 0 and limit_idx >= limit_n2:
+                            dictstr += f"<span style=\"{RESERVE3}\">[{k.sub_index}]: </span>"
+                        elif limit_n1 > 0 and limit_idx >= limit_n1:
+                            dictstr += f"<span style=\"{RESERVE2}\">[{k.sub_index}]: </span>"
+                        elif limit_idx >= len(bse_palette):
+                            dictstr += f"<span style=\"{RESERVE1}\">[{k.sub_index}]: </span>"
+                        else:
+                            dictstr += f"<span style=\"{bse_palette[k.sub_index]}\">[{k.sub_index}]: </span>"
                         for subentry in entry:
                             if isinstance(subentry, RLE0Byte):
                                 dictstr += "<span style=\"background-color:rgb(0,0,0); color:rgb(255,255,255);\">"
@@ -261,14 +276,7 @@ def bse_runner():
                                     dictstr += "00 "
                                 dictstr += "</span>"
                             elif isinstance(subentry, DB04Byte) or isinstance(subentry, DB08Byte) or isinstance(subentry, ALT0Byte):
-                                if limit_n2 > 0 and limit_idx >= limit_n2:
-                                    dictstr += f"<span style=\"{RESERVE3}\">{subentry} </span>"
-                                elif limit_n1 > 0 and limit_idx >= limit_n1:
-                                    dictstr += f"<span style=\"{RESERVE2}\">{subentry} </span>"
-                                elif limit_idx >= len(bse_palette):
-                                    dictstr += f"<span style=\"{RESERVE1}\">{subentry} </span>"
-                                else:
-                                    dictstr += f"<span style=\"{bse_palette[k.sub_index]}\">{subentry} </span>"
+                                dictstr += f"<span style=\"background-color:rgb(0,0,0); color:rgb(255,255,255);\">{subentry} </span>"
                             else:
                                 if limit_n2 > 0 and limit_idx >= limit_n2:
                                     dictstr += f"<span style=\"{RESERVE3}\">{subentry} </span>"
@@ -281,27 +289,24 @@ def bse_runner():
                                 
                         dictstr += "  "
                 dictstr += "\n"
-                # Writing logic is here
+                
+                csc_applications = csc_savings_get()
 
-                htmlf.write("BSE statistics:\n")
+                ##### Writing logic is here! #####
+                htmlf.write(f"Total bytes affected: {len(page) - literal_count}, total savings: {len(page) - len(post_bse)}, uncompressed: {literal_count}, final size after unpadding bytes: {len(compressed_nochunk) / 8} Bytes,")
+                htmlf.write(f" compression ratio: {round((4096 * 8) / (len(dictionary) + len(compressed_nochunk)), 3)}.\n\n")
+                htmlf.write("CSC statistics:\n")
+                htmlf.write(f"Bytes affected by CSC in input, saved by CSC, CSC codes in final output: {sum(csc_savings)}, {len(page) - len(post_csc)}, {sum(csc_appear)}\n")
+                htmlf.write(f"<span style=\"background-color:rgb(0,0,0); color:rgb(255,255,255);\">[Run Length 0]: in input {csc_savings[0]}, in compressed {csc_appear[0]}, saves {csc_savings[0] - csc_applications[0]}, applied {csc_applications[0]} times</span> ")
+                htmlf.write(f"<span style=\"background-color:rgb(0,0,0); color:rgb(255,255,255);\">[Two 0 every 4]: in input {csc_savings[1]}, in compressed {csc_appear[1]}, saves {csc_savings[1] - csc_applications[1]}, applied {csc_applications[1]} times</span>\n")
+                htmlf.write(f"<span style=\"background-color:rgb(0,0,0); color:rgb(255,255,255);\">[Two 0 every 8]: in input {csc_savings[2]}, in compressed {csc_appear[2]}, saves {csc_savings[2] - csc_applications[2]}, applied {csc_applications[2]} times</span> ")
+                htmlf.write(f"<span style=\"background-color:rgb(0,0,0); color:rgb(255,255,255);\">[Alternating 0]: in input {csc_savings[3]}, in compressed {csc_appear[3]}, saves {csc_savings[3] - csc_applications[3]}, applied {csc_applications[3]} times</span>\n")
+                htmlf.write("\nBSE Dictionary:\n")
+                htmlf.write(f"Bytes affected by BSE in input, saved by BSE, BSE codes in final output: {sum(bse_affected_num)}, {len(post_csc) - len(post_bse)}, {sum(bse_appear)}\n")
+                htmlf.write(f"Block 1 savings: {block_savings[0]}, block 2: {block_savings[1]}, block 3: {block_savings[2]}\n")
                 htmlf.write(dictstr)
-                htmlf.write(f"Dictionary size: {sum(dict_lengths)}\n\n")
-                htmlf.write("CSC statistics\n")
-                htmlf.write(f"CSC in raw: RLE0={csc_savings[0]}, DB04={csc_savings[1]}, DB08={csc_savings[2]}, ALT0={csc_savings[3]}\n")
-                htmlf.write(f"CSC in compressed: RLE0={csc_appear[0]}, DB04={csc_appear[1]}, DB08={csc_appear[2]}, ALT0={csc_appear[3]}\n")
-                htmlf.write("\nRaw page statistics:\n")
-                htmlf.write(f"Compressed by BSE: {bse_total}, ")
-                htmlf.write(f"compressed by CSC: {csc_savings[0] + csc_savings[1] + csc_savings[2] + csc_savings[3]}, ")
-                htmlf.write(f"compressed total: {bse_total + csc_savings[0] + csc_savings[1] + csc_savings[2] + csc_savings[3]}, ")
-                htmlf.write(f"not compressed: {literal_count}, final size: {len(compressed_nochunk) / 8}, compression ratio: {(4096 * 8) / (len(dictionary) + len(compressed_nochunk))}.\n")
                 htmlf.write(pagestr)
                 htmlf.write("\n\n\n\n")
-                    
-                # Catch any errors if the lengths of the pages do not match up
-                try:
-                    assert len(decompressed) == len(page)
-                except AssertionError as e:
-                    raise AssertionError(f"(!) Failure in page {page_id} from bm {benchmark}") from e
 
                 progress_bar.update(1)      
             
